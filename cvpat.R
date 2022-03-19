@@ -1,0 +1,117 @@
+cvpat <- function(mv, cv_folds, model1, model2, hypothesis, compare_on_constructs = NULL, boot_samples, rescale_pred_errors = FALSE, seed = NULL) {
+  if (hypothesis == "M1_better_out_of_sample_than_M2") {
+    testtype <- "greater"
+  } else if (hypothesis == "M1!=M2") {
+    testtype <- "two.sided"
+  } else {
+    stop(paste("Unsupported `hypothesis`:", hypothesis))
+  }
+
+  # Save current global seed (and re-apply before function exits), then set seed if provided.
+  if (exists(".Random.seed", where = ".GlobalEnv")) {
+    old_seed <- .GlobalEnv$.Random.seed
+  } else{
+    runif(1)
+    old_seed <- .GlobalEnv$.Random.seed
+  }
+  on.exit({
+    .Random.seed <<- old_seed
+  })
+  if (is.numeric(seed)) {
+    set.seed(seed)
+  }
+
+  N <- nrow(mv)
+  # Calculate established and alternative model results
+
+  # Calculate losses and corresponding t-statistic
+  Losses <- LossFun(N = N,
+                    mv = mv,
+                    cv_folds = cv_folds,
+                    model1 = model1,
+                    model2 = model2,
+                    compare_on_constructs = compare_on_constructs,
+                    rescale_pred_errors = rescale_pred_errors)
+
+  t.stat <- t.test(Losses$LossM2,
+                   Losses$LossM1,
+                   alternative = testtype,
+                   paired=TRUE)$statistic
+
+    if (boot_samples>0) {
+      Boot_res<-Bootstrap_di(Losses, boot_samples, testtype, N)
+    }
+  ### Save results for output
+  # Initiate list of results
+  AllResults <- vector(mode = "list", length = 4)
+  names(AllResults) <- c("res", "indiv.losses", "conf.int", "conv.fail")
+  # Average loss
+  avg_loss_M1 <- mean(Losses$LossM1)
+  avg_loss_M2 <- mean(Losses$LossM2)
+  avg_loss_sep_lv_M1 <- unlist(lapply(Losses$LossM1_sepLV, function(x) mean(x)))
+  avg_loss_sep_lv_M2 <- unlist(lapply(Losses$LossM2_sepLV, function(x) mean(x)))
+  # Only include LV that are endogenous in both models
+  endog_bot_models <- base::intersect(names(avg_loss_sep_lv_M1), names(avg_loss_sep_lv_M2))
+  avg_loss_sep_lv_M1 <- avg_loss_sep_lv_M1[endog_bot_models]
+  avg_loss_sep_lv_M2 <- avg_loss_sep_lv_M2[endog_bot_models]
+  # Begin to build results table
+  AllResults$res <- rbind("avg_loss_M1" = c("Overall" = avg_loss_M1, avg_loss_sep_lv_M1),
+               "avg_loss_M2" = c("Overall" = avg_loss_M2, avg_loss_sep_lv_M2))
+  AllResults$res <- rbind(AllResults$res, "Diff (M2 - M1)" = c(AllResults$res[2,] - AllResults$res[1,]))
+  # non-bootstrapped t-statistics, p-value and confidence intervals
+  all_non_boot_p_val_list <- all_non_boot_sign_res(Losses, testtype)
+  AllResults$res <- rbind(AllResults$res, "non.boot.t.stat"=all_non_boot_p_val_list$all_t_val)
+  AllResults$res <- rbind(AllResults$res, "non.boot.p.val"=all_non_boot_p_val_list$all_p_val)
+  AllResults$conf.int <- all_non_boot_p_val_list$all_conf_inf
+  if (boot_samples>0) {
+    # Bootstrapped t-statistics
+    AllResults$res <- rbind(AllResults$res, "boot.var.t.stat"=Boot_res[["t.stat.b.v"]])
+    # Bootstrap p-values
+    AllResults$res <- rbind(AllResults$res, rbind("p.value.perc.t" = Boot_res[["p.value.perc.t"]],
+                                                  "p.value.b.v.t" = Boot_res[["p.value.var.ttest"]],
+                                                  "p.value.perc.D" = Boot_res[["p.value.perc.D"]]))
+  }
+  # Individual losses
+  AllResults$losses <- Losses
+
+  return(AllResults)
+}
+
+# Helpers
+all_non_boot_sign_res <- function(Losses, testtype){
+  # Identify which constructs has the same name in both models
+  same_constructs_both_models <- intersect(names(Losses$LossM1_sepLV),names(Losses$LossM2_sepLV))
+  # Initiate df with overall losses
+  all_loss <- data.frame(LossM1 = Losses$LossM1, LossM2 = Losses$LossM2)
+  # Insert losses from each model on same constructs
+  for (c in same_constructs_both_models) {
+    all_loss[,paste("LossM1", c, sep = "_")] <- Losses$LossM1_sepLV[[c]]
+    all_loss[,paste("LossM2", c, sep = "_")] <- Losses$LossM2_sepLV[[c]]
+  }
+  # p-value from t-test on overall model
+  Overall_t.test<-t.test(all_loss$LossM2,all_loss$LossM1,alternative = testtype, paired=TRUE)
+  # Confidence interval from t-test on overall model
+  Overall_conf_int<-t.test(all_loss$LossM2,all_loss$LossM1,alternative = testtype, paired=TRUE)$conf.int[1:2]
+  all_conf_inf <- data.frame("Lower CI" = Overall_conf_int[1], "Upper CI" = Overall_conf_int[2])
+  rownames(all_conf_inf) <- "Overall"
+  # Initiate df with p-value and t-statistic for overall model
+  all_p_val <- data.frame(Overall = Overall_t.test$p.value)
+  all_t_val <- data.frame(Overall = Overall_t.test$statistic)
+  # p-value on each construct (using loss on each construct from seperate models)
+  for (c in same_constructs_both_models) {
+    # T-tests
+    all_t_val[,c] <- t.test(all_loss[,paste("LossM2", c, sep = "_")],
+                            all_loss[,paste("LossM1", c, sep = "_")],
+                            alternative = testtype, paired=TRUE)$statistic
+    # P-values
+    all_p_val[,c] <- t.test(all_loss[,paste("LossM2", c, sep = "_")],
+                            all_loss[,paste("LossM1", c, sep = "_")],
+                            alternative = testtype, paired=TRUE)$p.value
+    # Confidence intervals
+    all_conf_inf[c,] <- t.test(all_loss[,paste("LossM2", c, sep = "_")],
+                               all_loss[,paste("LossM1", c, sep = "_")],
+                               alternative = testtype, paired=TRUE)$conf.int[1:2]
+  }
+  return(list(all_t_val = unlist(all_t_val), all_p_val = unlist(all_p_val), all_conf_inf = all_conf_inf))
+}
+
