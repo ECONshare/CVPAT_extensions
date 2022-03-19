@@ -133,11 +133,3 @@ res_CVPAT_AM2 <- cvpat(mv = corp_rep, cv_folds = 10,
 # Inspect CVPAT results
 res_CVPAT_AM2$res[c("avg_loss_M1", "avg_loss_M2", "Diff (M2 - M1)", "p.value.perc.t"),
                  "CUSA_CUSL"]
-
-
-
-res_CVPAT_AM2
-res_CVPAT_IA$indiv.losses
-
-
-

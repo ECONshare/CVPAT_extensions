@@ -2,6 +2,8 @@
 ## CITATION: Sharma, P.N., Liengaard, B., Hair, J., Sarstedt, M., and Ringle, C. "Predictive model assessment and selection in composite-based modeling using PLS-SEM: extensions and guidelines for using CVPAT" (European Journal of Marketing, 2022).
 ###########################################################
 
+For an example of running CVPAT, see the file "CVPAT_example.R".
+
 ###########################################################
 ## Input to CVPAT function
 ###########################################################
